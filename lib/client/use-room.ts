@@ -32,7 +32,8 @@ export function useRoom(code: string, sound: { enabled: boolean; volume: number 
   const [state, setState] = useState<TableState | null>(null)
   const [chat, setChat] = useState<ChatMessage[]>([])
   const [history, setHistory] = useState<HandHistoryEntry[]>([])
-  const [status, setStatus] = useState<"loading" | "gate" | "live" | "closed">("loading")
+  const [status, setStatus] = useState<"loading" | "gate" | "live" | "closed" | "conflict" | "displaced">("loading")
+  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dealing, setDealing] = useState(false)
   const [flies, setFlies] = useState<ChipFly[]>([])
@@ -90,13 +91,30 @@ export function useRoom(code: string, sound: { enabled: boolean; volume: number 
       }
     }
     const onClosed = () => setStatus("closed")
+    const onDisplaced = (payload: { message?: string }) => {
+      sessionStorage.setItem(displacedKey(code), "1")
+      setNotice(payload?.message ?? "Your seat moved to another tab.")
+      setStatus("displaced")
+      setState(null)
+    }
     const onConnect = () => {
+      if (sessionStorage.getItem(displacedKey(code))) {
+        setStatus("displaced")
+        setNotice("Your seat is open in another tab.")
+        return
+      }
       const session = loadSession(code)
       if (!session) {
         setStatus((current) => (current === "live" ? current : "gate"))
         return
       }
-      socket.emit("session:resume", { token: session.token }, (response: Ack) => {
+      socket.emit("session:resume", { token: session.token }, (response: Ack & { code?: string }) => {
+        if (!response.ok && response.code === "already-seated") {
+          setError(response.error)
+          setNotice(response.error)
+          setStatus("conflict")
+          return
+        }
         if (!response.ok) {
           clearSession(code)
           setStatus("gate")
@@ -106,11 +124,13 @@ export function useRoom(code: string, sound: { enabled: boolean; volume: number 
     }
     socket.on("table:update", onUpdate)
     socket.on("table:closed", onClosed)
+    socket.on("table:displaced", onDisplaced)
     socket.on("connect", onConnect)
     if (socket.connected) onConnect()
     return () => {
       socket.off("table:update", onUpdate)
       socket.off("table:closed", onClosed)
+      socket.off("table:displaced", onDisplaced)
       socket.off("connect", onConnect)
     }
   }, [code, sound.enabled, sound.volume])
@@ -124,17 +144,39 @@ export function useRoom(code: string, sound: { enabled: boolean; volume: number 
   }, [])
 
   const join = useCallback(
-    async (input: { name: string; avatar: { color: string; emoji: string }; spectate?: boolean }) => {
+    async (input: { name: string; avatar: { color: string; emoji: string }; spectate?: boolean; remember?: boolean }) => {
       const response = await emitAck<Ack & { token?: string; playerId?: string; name?: string }>("lobby:join", {
         code,
-        ...input,
+        name: input.name,
+        avatar: input.avatar,
+        spectate: input.spectate,
       })
       if (!fail(response) || !response.token || !response.playerId) return
-      saveSession(code, { token: response.token, playerId: response.playerId, name: response.name ?? input.name })
+      if (input.remember !== false) {
+        saveSession(code, { token: response.token, playerId: response.playerId, name: response.name ?? input.name })
+      }
+      sessionStorage.removeItem(displacedKey(code))
       setStatus("live")
     },
     [code, fail],
   )
+
+  const takeover = useCallback(async () => {
+    const session = loadSession(code)
+    if (!session) {
+      setStatus("gate")
+      return
+    }
+    const response = await emitAck<Ack & { code?: string }>("session:resume", { token: session.token, takeover: true })
+    if (!response.ok) {
+      setError(response.error)
+      toast.error(response.error)
+      return
+    }
+    sessionStorage.removeItem(displacedKey(code))
+    setNotice(null)
+    setStatus("live")
+  }, [code])
 
   const act = useCallback(
     async (action: PlayerAction) => {
@@ -159,10 +201,16 @@ export function useRoom(code: string, sound: { enabled: boolean; volume: number 
     reactions,
     status,
     error,
+    notice,
     join,
+    takeover,
     act,
     send,
   }
+}
+
+function displacedKey(code: string) {
+  return `felt:displaced:${code.toUpperCase()}`
 }
 
 function soundFor(event: AnimEvent): SoundName | null {

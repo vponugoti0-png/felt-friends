@@ -11,9 +11,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { readRecentSnapshot, readServerRecent, saveSession, subscribeRecent } from "@/lib/client/settings"
+import { loadSession, readRecentSnapshot, readServerRecent, saveSession, subscribeRecent } from "@/lib/client/settings"
 import { emitAck, getSocket } from "@/lib/client/socket"
-import type { RoomSummary, TableMode } from "@/lib/game/protocol"
+import { PRACTICE_CODE, type RoomSummary, type TableMode } from "@/lib/game/protocol"
 
 type Ack = { ok: false; error: string } | ({ ok: true; code: string; token: string; playerId: string; name?: string })
 
@@ -32,6 +32,7 @@ export function LobbyScreen() {
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
 
   const name = settings.name
 
@@ -81,6 +82,51 @@ export function LobbyScreen() {
 
         {error ? <p className="text-sm text-rose-300">{error}</p> : null}
 
+        <section className="rounded-3xl border border-[#e4c36a]/40 bg-[#1a1408] p-5">
+          <p className="text-xs tracking-[0.22em] text-[#e4c36a] uppercase">Practice table</p>
+          <h2 className="font-display text-3xl text-[#f6f1e6]">Play with bots</h2>
+          <p className="mt-2 max-w-2xl text-sm text-[#d9ccb4]">
+            One tap opens the standing practice table. Bluff Bot, Check Bot, and River Bot are already seated. They stay for the next hand. A restart rebuilds the same squad.
+          </p>
+          <div className="mt-4 space-y-3">
+            <AvatarPicker value={settings.avatar} onChange={(avatar) => update({ avatar })} />
+            <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[12rem] flex-1 space-y-1.5">
+              <Label htmlFor="practice-name">Your name</Label>
+              <Input
+                id="practice-name"
+                value={name}
+                maxLength={16}
+                placeholder="Your name"
+                onChange={(event) => update({ name: event.target.value })}
+              />
+            </div>
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                const trimmed = name.trim()
+                if (!trimmed) {
+                  setError("Type your name, then sit with the bots.")
+                  return
+                }
+                if (loadSession(PRACTICE_CODE)) {
+                  router.push(`/room/${PRACTICE_CODE}`)
+                  return
+                }
+                setBusy(true)
+                setError(null)
+                void emitAck<Ack>("lobby:practice", { name: trimmed, avatar: settings.avatar })
+                  .then(enter)
+                  .finally(() => setBusy(false))
+              }}
+            >
+              Play with bots
+            </Button>
+            </div>
+          </div>
+        </section>
+
         <div className="grid gap-4 lg:grid-cols-2">
           <form
             className="space-y-4 rounded-3xl border border-white/10 bg-[#141820]/90 p-5"
@@ -101,17 +147,30 @@ export function LobbyScreen() {
                 .finally(() => setBusy(false))
             }}
           >
-            <h2 className="font-display text-2xl">Open a table</h2>
+            <h2 className="font-display text-2xl">Create a private room</h2>
+            <p className="text-sm text-[#b7ab96]">For a friends night. Share the code when you are ready. Anyone with the code can join — treat it like a party invite.</p>
             <div className="space-y-1.5">
               <Label htmlFor="host-name">Your name</Label>
-              <Input id="host-name" value={name} maxLength={16} required placeholder="Ace" onChange={(event) => update({ name: event.target.value })} />
+              <Input id="host-name" value={name} maxLength={16} required placeholder="Your name" onChange={(event) => update({ name: event.target.value })} />
             </div>
             <AvatarPicker value={settings.avatar} onChange={(avatar) => update({ avatar })} />
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <Field label="Small blind" value={sb} onChange={setSb} />
-              <Field label="Big blind" value={bb} onChange={setBb} />
-              <Field label="Stack" value={stack} onChange={setStack} />
-              <Field label="Seconds" value={clock} onChange={setClock} />
+            <div>
+              <Button type="button" variant="ghost" onClick={() => setAdvanced((open) => !open)}>
+                {advanced ? "Hide advanced" : "Advanced"}
+              </Button>
+              {advanced ? (
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-[#b7ab96]">Starting chips are what each player begins with. Time per decision is how long you get before the table checks or folds for you. Blinds are the small forced bets each hand.</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Field label="Small blind" value={sb} onChange={setSb} />
+                    <Field label="Big blind" value={bb} onChange={setBb} />
+                    <Field label="Starting chips" value={stack} onChange={setStack} />
+                    <Field label="Time per decision" value={clock} onChange={setClock} />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-[#b7ab96]">50/100 blinds, 10,000 starting chips, 25 seconds per decision.</p>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-4 text-sm">
               <label className="flex items-center gap-2">
@@ -147,10 +206,12 @@ export function LobbyScreen() {
             }}
           >
             <h2 className="font-display text-2xl">Join with a code</h2>
+            <p className="text-sm text-[#b7ab96]">A friend sends you a short code or invite link. Anyone with that code can sit down.</p>
             <div className="space-y-1.5">
               <Label htmlFor="guest-name">Your name</Label>
-              <Input id="guest-name" value={name} maxLength={16} required placeholder="River" onChange={(event) => update({ name: event.target.value })} />
+              <Input id="guest-name" value={name} maxLength={16} required placeholder="Your name" onChange={(event) => update({ name: event.target.value })} />
             </div>
+            <AvatarPicker value={settings.avatar} onChange={(avatar) => update({ avatar })} />
             <div className="space-y-1.5">
               <Label htmlFor="room-code">Room code</Label>
               <Input
@@ -204,14 +265,36 @@ export function LobbyScreen() {
                 {rooms.map((room) => (
                   <li key={room.code} className="flex items-center justify-between gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm">
                     <span>
-                      <strong className="tracking-[0.18em]">{room.code}</strong>
+                      <strong>{room.practice ? room.title : room.code}</strong>
                       <span className="text-[#b7ab96]">
-                        {" "}
-                        · {room.smallBlind}/{room.bigBlind} · {room.playerCount} seated
+                        {room.practice ? ` · ${room.code}` : ""} · {room.smallBlind}/{room.bigBlind} · {room.playerCount} seated
                       </span>
                     </span>
-                    <Button type="button" size="sm" variant="secondary" onClick={() => setCode(room.code)}>
-                      Use
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (room.practice) {
+                          if (loadSession(room.code)) {
+                            router.push(`/room/${room.code}`)
+                            return
+                          }
+                          const trimmed = name.trim()
+                          if (!trimmed) {
+                            setError("Type your name, then sit with the bots.")
+                            return
+                          }
+                          setBusy(true)
+                          void emitAck<Ack>("lobby:practice", { name: trimmed, avatar: settings.avatar })
+                            .then(enter)
+                            .finally(() => setBusy(false))
+                          return
+                        }
+                        setCode(room.code)
+                      }}
+                    >
+                      {room.practice ? "Sit down" : "Use"}
                     </Button>
                   </li>
                 ))}

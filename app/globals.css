@@ -124,6 +124,8 @@
   }
   body {
     @apply bg-background text-foreground;
+    overflow-x: hidden;
+    max-width: 100%;
   }
   html {
     @apply font-sans;
@@ -135,6 +137,33 @@
     radial-gradient(1200px 600px at 50% -10%, rgba(228, 195, 106, 0.08), transparent 55%),
     radial-gradient(900px 500px at 100% 100%, rgba(14, 90, 52, 0.35), transparent 50%),
     #07080d;
+}
+
+.seat-anchor {
+  position: absolute;
+  left: var(--seat-x);
+  top: var(--seat-y);
+  transform: translate(-50%, -50%);
+}
+
+@media (max-width: 640px) {
+  .seat-anchor {
+    position: relative;
+    left: auto;
+    top: auto;
+    transform: none;
+  }
+
+  .felt .playing-card:not(.mini) {
+    width: 30px;
+    height: 42px;
+    padding: 2px 3px;
+    font-size: 11px;
+  }
+
+  .dealer-bust {
+    display: none;
+  }
 }
 
 .felt-rail {

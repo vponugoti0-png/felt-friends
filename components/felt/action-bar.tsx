@@ -26,7 +26,7 @@ export function ActionBar({
   const presets = useMemo(() => buildPresets(legal, pot, bigBlind, min, max, short), [legal, pot, bigBlind, min, max, short])
 
   return (
-    <div className="border-t border-white/10 bg-[#0c1016]/95 px-3 py-3 backdrop-blur">
+    <div className="shrink-0 border-t border-white/10 bg-[#0c1016]/95 px-3 py-3 backdrop-blur">
       <div className="mx-auto flex max-w-5xl flex-col gap-3 lg:flex-row lg:items-center">
         <div className="flex items-center gap-2">
           {hole ? (
@@ -124,15 +124,23 @@ function WagerControls({
             onChange={(event) => setAmount(Number(event.target.value))}
           />
           <div className="flex flex-wrap gap-1.5">
-            {presets.map((preset) => (
-              <Button key={preset.label} type="button" size="sm" variant="outline" onClick={() => setAmount(preset.amount)}>
-                {preset.label}
-              </Button>
-            ))}
+            {presets.map((preset) =>
+              preset.label === "All-in" ? (
+                <Button key={preset.label} type="button" size="sm" onClick={() => onAct({ type: "wager", amount: max })}>
+                  All-in {formatChips(max)}
+                </Button>
+              ) : (
+                <Button key={preset.label} type="button" size="sm" variant="outline" onClick={() => setAmount(preset.amount)}>
+                  {preset.label}
+                </Button>
+              ),
+            )}
           </div>
         </div>
       ) : null}
-      <p className="text-[11px] tracking-wide text-[#b7ab96] uppercase">F fold · C check/call · R bet/raise · A all-in</p>
+      <p className="text-[11px] tracking-wide text-[#b7ab96] uppercase">
+        F fold · C check/call · R bet/raise · All-in shoves now
+      </p>
     </div>
   )
 }
@@ -157,6 +165,7 @@ function buildPresets(
   ]
   const seen = new Set<number>()
   return items.filter((item) => {
+    if (item.label === "All-in") return true
     if (seen.has(item.amount)) return false
     seen.add(item.amount)
     return true

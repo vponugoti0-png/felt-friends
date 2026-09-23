@@ -48,7 +48,12 @@ export function SeatView({
   const best = new Set(player.bestFive ?? [])
 
   return (
-    <div className={cn("flex w-[108px] flex-col items-center gap-1 text-center", player.folded && "opacity-50")}>
+    <div
+      className={cn(
+        "flex w-[78px] flex-col items-center gap-0.5 text-center sm:w-[108px] sm:gap-1",
+        (player.folded || player.eliminated || (player.stack === 0 && (!player.allIn || player.sittingOut))) && "opacity-50",
+      )}
+    >
       <div className="relative">
         {player.isTurn ? (
           <svg className="timer-ring absolute -inset-1.5 size-[60px]" viewBox="0 0 36 36" aria-hidden>
@@ -105,9 +110,9 @@ export function SeatView({
         {player.isHost ? <Tag>HOST</Tag> : null}
         {player.isSmallBlind ? <Tag>SB</Tag> : null}
         {player.isBigBlind ? <Tag>BB</Tag> : null}
-        {player.allIn ? <Tag>ALL-IN</Tag> : null}
-        {player.sittingOut ? <Tag>OUT</Tag> : null}
-        {player.eliminated ? <Tag>OUT</Tag> : null}
+        {player.allIn && !player.sittingOut ? <Tag>ALL-IN</Tag> : null}
+        {(player.stack === 0 || player.eliminated) && (!player.allIn || player.sittingOut) ? <Tag>BUSTED</Tag> : null}
+        {player.sittingOut && player.stack > 0 && !player.eliminated ? <Tag>OUT</Tag> : null}
         {!player.connected && !player.isBot ? <Tag>AWAY</Tag> : null}
       </div>
       {player.streetBet > 0 ? (

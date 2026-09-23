@@ -50,10 +50,39 @@ export function attachGameServer(io: Server) {
       }
     })
 
-    client.on("session:resume", (payload: { token?: string }, ack?: Ack) => {
+    client.on("lobby:practice", (payload: { name?: string; avatar?: JoinInput["avatar"]; spectate?: boolean }, ack?: Ack) => {
+      try {
+        const result = rooms.joinPractice({
+          name: payload?.name ?? "",
+          avatar: payload?.avatar,
+          spectate: payload?.spectate,
+        })
+        bind(client, result.code, result.token, result.playerId)
+        ack?.({ ok: true, ...result })
+        queueBroadcast(io, result.code)
+        io.to("lobby").emit("lobby:rooms", rooms.listRooms())
+      } catch (error) {
+        ack?.({ ok: false, error: messageOf(error) })
+      }
+    })
+
+    client.on("session:resume", (payload: { token?: string; takeover?: boolean }, ack?: Ack) => {
       try {
         if (!payload?.token) throw new RoomError("Missing session.")
-        const result = rooms.resume(payload.token)
+        const result = rooms.resume(payload.token, { socketId: client.id, takeover: Boolean(payload.takeover) })
+        if (result.conflict) {
+          ack?.({
+            ok: false,
+            code: "already-seated",
+            error: "You're already seated in another tab.",
+          })
+          return
+        }
+        if (result.displacedSocketId) {
+          io.to(result.displacedSocketId).emit("table:displaced", {
+            message: "Your seat moved to another tab. This tab is no longer playing that seat.",
+          })
+        }
         bind(client, result.code, payload.token, result.playerId)
         ack?.({ ok: true, ...result })
         queueBroadcast(io, result.code)
@@ -118,8 +147,16 @@ export function attachGameServer(io: Server) {
       withSession(client, ack, (token) => rooms.hostBlinds(token, Number(payload?.smallBlind), Number(payload?.bigBlind)))
     })
 
-    client.on("host:add-bot", (_payload: unknown, ack?: Ack) => {
-      withSession(client, ack, (token) => rooms.hostAddBot(token))
+    client.on("host:add-bot", (payload: { name?: string } | undefined, ack?: Ack) => {
+      withSession(client, ack, (token) => rooms.hostAddBot(token, payload?.name))
+    })
+
+    client.on("host:add-group", (_payload: unknown, ack?: Ack) => {
+      withSession(client, ack, (token) => rooms.hostAddReadyGroup(token))
+    })
+
+    client.on("host:clear-bots", (_payload: unknown, ack?: Ack) => {
+      withSession(client, ack, (token) => rooms.hostClearBots(token))
     })
 
     client.on("host:remove-bot", (payload: { playerId?: string }, ack?: Ack) => {
@@ -137,7 +174,7 @@ export function attachGameServer(io: Server) {
     client.on("disconnect", () => {
       if (client.data.token) {
         const code = client.data.code
-        rooms.disconnect(client.data.token)
+        rooms.disconnect(client.data.token, client.id)
         if (code) queueBroadcast(io, code)
       }
     })

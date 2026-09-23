@@ -84,6 +84,8 @@ export interface TableState {
   you: YouInfo | null
   maxSeats: number
   championName: string | null
+  practice: boolean
+  botBench: BotBenchItem[]
 }
 
 export interface HandHistoryEntry {
@@ -105,6 +107,14 @@ export interface ChatMessage {
   spectator: boolean
 }
 
+export interface BotBenchItem {
+  name: string
+  emoji: string
+  style: string
+  seated: boolean
+  playerId?: string
+}
+
 export interface RoomSummary {
   code: string
   mode: TableMode
@@ -115,6 +125,8 @@ export interface RoomSummary {
   spectatorCount: number
   handNumber: number
   createdAt: number
+  practice: boolean
+  title: string
 }
 
 export type AnimEvent =
@@ -150,3 +162,6 @@ export const AVATAR_EMOJIS = ["🦊", "🐼", "🐸", "🐙", "🦄", "🐯", "�
 export const REACTIONS = ["😂", "🔥", "👏", "😱", "🃏", "💰", "😤", "🥳", "💀", "👍"]
 
 export const MAX_SEATS = 9
+
+/** Standing practice table. Recreated with the ready bot group after a restart. */
+export const PRACTICE_CODE = "PRACT"

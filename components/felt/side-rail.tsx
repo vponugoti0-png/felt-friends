@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PlayingCard } from "@/components/felt/playing-card"
-import { REACTIONS, type ChatMessage, type HandHistoryEntry, type PublicPlayer } from "@/lib/game/protocol"
+import { REACTIONS, type BotBenchItem, type ChatMessage, type HandHistoryEntry, type PublicPlayer } from "@/lib/game/protocol"
 import { formatChips, cardKey } from "@/lib/poker/cards"
 
 export function SideRail({
@@ -20,7 +20,11 @@ export function SideRail({
   onKick,
   onPause,
   onBlinds,
+  practice,
+  bench,
   onAddBot,
+  onAddGroup,
+  onClearBots,
   onRemoveBot,
   onStart,
   onStop,
@@ -37,7 +41,11 @@ export function SideRail({
   onKick: (playerId: string) => void
   onPause: (paused: boolean) => void
   onBlinds: (smallBlind: number, bigBlind: number) => void
-  onAddBot: () => void
+  practice: boolean
+  bench: BotBenchItem[]
+  onAddBot: (name?: string) => void
+  onAddGroup: () => void
+  onClearBots: () => void
   onRemoveBot: (playerId: string) => void
   onStart: () => void
   onStop: () => void
@@ -137,9 +145,39 @@ export function SideRail({
               <Button type="button" variant="outline" onClick={onStop}>
                 Stop
               </Button>
-              <Button type="button" variant="outline" onClick={onAddBot}>
-                Add bot
-              </Button>
+            </div>
+            <div className="space-y-2 rounded-xl bg-white/5 p-3">
+              <p className="text-sm">
+                {practice ? "Practice squad. " : ""}
+                Bots stay for the next hand.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" onClick={onAddGroup}>
+                  Add ready group
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={onClearBots}>
+                  Clear bots
+                </Button>
+              </div>
+              <ul className="space-y-1.5">
+                {bench.map((bot) => (
+                  <li key={bot.name} className="flex items-center justify-between gap-2 text-sm">
+                    <span>
+                      {bot.emoji} {bot.name}
+                      <span className="text-[#b7ab96]"> · {bot.style}</span>
+                    </span>
+                    {bot.seated && bot.playerId ? (
+                      <Button type="button" size="sm" variant="outline" onClick={() => onRemoveBot(bot.playerId!)}>
+                        Remove
+                      </Button>
+                    ) : (
+                      <Button type="button" size="sm" variant="secondary" onClick={() => onAddBot(bot.name)}>
+                        Add
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </div>
             <form
               className="flex items-end gap-2"
@@ -168,9 +206,7 @@ export function SideRail({
                     {player.isBot ? " · bot" : ""}
                   </span>
                   {player.isBot ? (
-                    <Button type="button" size="sm" variant="outline" onClick={() => onRemoveBot(player.id)}>
-                      Remove
-                    </Button>
+                    <span className="text-xs text-[#b7ab96]">Seated</span>
                   ) : player.isHost ? null : (
                     <Button type="button" size="sm" variant="destructive" onClick={() => onKick(player.id)}>
                       Kick
@@ -181,7 +217,7 @@ export function SideRail({
             </ul>
           </>
         ) : (
-          <p className="text-sm text-[#b7ab96]">The host deals, pauses, changes blinds, and invites bots.</p>
+          <p className="text-sm text-[#b7ab96]">The host deals, pauses, and seats bots. Bots stay for the next hand.</p>
         )}
       </TabsContent>
     </Tabs>

@@ -1,7 +1,7 @@
 import { randomBytes, randomInt, randomUUID } from "node:crypto"
 
 import { formatChips } from "@/lib/poker/cards"
-import { BOT_ROSTER, chooseBotAction, type BotStyle } from "@/lib/poker/bots"
+import { BOT_ROSTER, READY_GROUP, chooseBotAction, type BotStyle } from "@/lib/poker/bots"
 import { secureDeck } from "@/lib/poker/deck"
 import { cardKey } from "@/lib/poker/cards"
 import { PokerHand, type HandResult, type PlayerAction } from "@/lib/poker/hand"
@@ -10,11 +10,13 @@ import {
   AVATAR_COLORS,
   AVATAR_EMOJIS,
   MAX_SEATS,
+  PRACTICE_CODE,
   REACTIONS,
   type AnimEvent,
   type Avatar,
   type ChatMessage,
   type HandHistoryEntry,
+  type BotBenchItem,
   type PublicPlayer,
   type RoomPhase,
   type RoomSummary,
@@ -41,6 +43,7 @@ interface Member {
   chatTimes: number[]
   mutedUntil: number
   lastReactionAt: number
+  holder: string | null
   botStyle?: BotStyle
   removeAfterHand: boolean
   standAfterHand: boolean
@@ -56,6 +59,7 @@ interface Room {
   actionTimeSec: number
   mode: TableMode
   listed: boolean
+  practice: boolean
   paused: boolean
   stopAfterHand: boolean
   phase: RoomPhase
@@ -99,7 +103,7 @@ export interface JoinInput {
 }
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-const SHOWDOWN_MS = 5200
+const SHOWDOWN_MS = 3200
 const RUNOUT_MS = 780
 const BETWEEN_MS = 700
 const BOT_MIN_MS = 650
@@ -139,6 +143,7 @@ export class RoomManager {
   }
 
   listRooms(): RoomSummary[] {
+    this.ensurePractice()
     return [...this.rooms.values()]
       .filter((room) => room.listed)
       .map((room) => this.summary(room))
@@ -179,6 +184,7 @@ export class RoomManager {
       actionTimeSec,
       mode,
       listed: Boolean(input.listed),
+      practice: false,
       paused: false,
       stopAfterHand: false,
       phase: "lobby",
@@ -229,24 +235,54 @@ export class RoomManager {
     room.members.push(member)
     this.tokens.set(member.token, { code: room.code, playerId: member.id })
     room.lastHumanAt = this.now
+    this.adoptHost(room, member)
     this.note(room, `${member.name} ${member.seat === null ? "is watching" : "sits down"}.`)
     this.touch(room)
     return { code: room.code, token: member.token, playerId: member.id, name: member.name, seat: member.seat }
   }
 
-  resume(token: string) {
+  joinPractice(input: { name: string; avatar?: Partial<Avatar>; spectate?: boolean }) {
+    this.stamp()
+    this.ensurePractice()
+    return this.join({ code: PRACTICE_CODE, name: input.name, avatar: input.avatar, spectate: input.spectate })
+  }
+
+  resume(token: string, claim?: { socketId: string; takeover?: boolean }) {
     this.stamp()
     const found = this.tokens.get(token)
     if (!found) throw new RoomError("That seat session expired.")
     const room = this.requireRoom(found.code)
     const member = this.requireMember(room, found.playerId)
+    const otherTab =
+      Boolean(claim?.socketId) &&
+      Boolean(member.holder) &&
+      member.holder !== claim?.socketId &&
+      member.connected &&
+      !member.isBot
+    if (otherTab && !claim?.takeover) {
+      return {
+        conflict: true as const,
+        code: room.code,
+        playerId: member.id,
+        name: member.name,
+        displacedSocketId: null as string | null,
+      }
+    }
+    const displacedSocketId = otherTab && claim?.takeover ? member.holder : null
+    if (claim?.socketId) member.holder = claim.socketId
     member.connected = true
     if (!member.isBot) room.lastHumanAt = this.now
     this.touch(room)
-    return { code: room.code, playerId: member.id, name: member.name }
+    return {
+      conflict: false as const,
+      code: room.code,
+      playerId: member.id,
+      name: member.name,
+      displacedSocketId,
+    }
   }
 
-  disconnect(token: string) {
+  disconnect(token: string, socketId?: string) {
     this.stamp()
     const found = this.tokens.get(token)
     if (!found) return
@@ -254,7 +290,9 @@ export class RoomManager {
     if (!room) return
     const member = room.members.find((item) => item.id === found.playerId)
     if (!member || member.isBot) return
+    if (socketId && member.holder && member.holder !== socketId) return
     member.connected = false
+    member.holder = null
     if (room.members.some((item) => !item.isBot && item.connected)) room.lastHumanAt = this.now
     this.touch(room)
   }
@@ -430,23 +468,41 @@ export class RoomManager {
     this.touch(room)
   }
 
-  hostAddBot(token: string) {
+  hostAddBot(token: string, name?: string) {
     this.stamp()
     const { room } = this.host(token)
-    const seat = this.firstOpenSeat(room)
-    if (seat === null) throw new RoomError("No open seat for a bot.")
-    const used = new Set(room.members.map((member) => member.name))
-    const profile = BOT_ROSTER.find((bot) => !used.has(bot.name)) ?? BOT_ROSTER[room.members.length % BOT_ROSTER.length]
-    const bot = this.makeMember(profile.name, { color: profile.color, emoji: profile.emoji }, true)
-    bot.seat = seat
-    bot.stack = room.startingStack
-    bot.connected = true
-    bot.botStyle = profile.style
-    room.members.push(bot)
-    this.note(room, `${bot.name} sits down.`)
+    const bot = this.seatBot(room, name)
+    this.note(room, `${bot.name} sits down. Bots stay for the next hand.`)
     this.scheduleNext(room)
     this.touch(room)
     return { playerId: bot.id }
+  }
+
+  hostAddReadyGroup(token: string) {
+    this.stamp()
+    const { room } = this.host(token)
+    const missing = READY_GROUP.names.filter((name) => !this.botSeated(room, name))
+    if (missing.length === 0) throw new RoomError("The ready group is already seated.")
+    const added: string[] = []
+    for (const name of missing) {
+      if (this.firstOpenSeat(room) === null) break
+      added.push(this.seatBot(room, name).name)
+    }
+    if (added.length === 0) throw new RoomError("No open seat for the ready group.")
+    this.note(room, `${READY_GROUP.name} sits down (${added.join(", ")}). Bots stay for the next hand.`)
+    this.scheduleNext(room)
+    this.touch(room)
+    return { added }
+  }
+
+  hostClearBots(token: string) {
+    this.stamp()
+    const { room } = this.host(token)
+    const bots = room.members.filter((member) => member.isBot && member.seat !== null)
+    if (bots.length === 0) throw new RoomError("No bots to clear.")
+    for (const bot of [...bots]) this.removeMember(room, bot, false)
+    this.note(room, "Bots cleared. Add the ready group again whenever you want them back.")
+    this.touch(room)
   }
 
   hostRemoveBot(token: string, playerId: string) {
@@ -691,7 +747,11 @@ export class RoomManager {
       if (!member) continue
       member.stack = hp.stack
       member.lastAction = null
-      if (member.stack === 0 && room.mode === "sng") member.eliminated = true
+      if (member.stack === 0) {
+        member.sittingOut = true
+        if (room.mode === "sng") member.eliminated = true
+        this.note(room, `${member.name} is busted and sits out until a rebuy.`)
+      }
     }
     const pot = result.payouts.reduce((sum, payout) => sum + payout.amount, 0)
     room.history.push({
@@ -804,6 +864,11 @@ export class RoomManager {
     if (room.hostId === member.id) this.passHost(room)
     this.note(room, `${member.name} left.`)
     if (!room.members.some((item) => !item.isBot)) {
+      if (room.practice) {
+        room.hostId = ""
+        this.touch(room)
+        return
+      }
       this.rooms.delete(room.code)
       this.removed.add(room.code)
       this.dirty.add(room.code)
@@ -813,10 +878,20 @@ export class RoomManager {
   }
 
   private passHost(room: Room) {
-    const next = room.members.find((member) => !member.isBot) ?? room.members[0]
-    if (!next) return
+    const next = room.members.find((member) => !member.isBot)
+    if (!next) {
+      room.hostId = ""
+      return
+    }
     room.hostId = next.id
     this.note(room, `${next.name} is the new host.`)
+  }
+
+  private adoptHost(room: Room, member: Member) {
+    if (member.isBot || member.seat === null) return
+    const host = room.members.find((item) => item.id === room.hostId)
+    if (host && !host.isBot) return
+    room.hostId = member.id
   }
 
   private scheduleNext(room: Room) {
@@ -933,6 +1008,8 @@ export class RoomManager {
         : null,
       maxSeats: MAX_SEATS,
       championName: room.members.find((member) => member.id === room.championId)?.name ?? null,
+      practice: room.practice,
+      botBench: this.botBench(room),
     }
   }
 
@@ -947,11 +1024,18 @@ export class RoomManager {
       spectatorCount: room.members.filter((member) => member.seat === null).length,
       handNumber: room.handNumber,
       createdAt: room.createdAt,
+      practice: room.practice,
+      title: room.practice
+        ? room.members.some((member) => member.isBot && member.seat !== null)
+          ? "Practice · bots ready"
+          : "Practice table"
+        : "Private table",
     }
   }
 
   private gc() {
     for (const room of this.rooms.values()) {
+      if (room.practice) continue
       const humans = room.members.some((member) => !member.isBot && member.connected)
       if (!humans && this.now - room.lastHumanAt > IDLE_MS) {
         this.rooms.delete(room.code)
@@ -986,6 +1070,7 @@ export class RoomManager {
       chatTimes: [],
       mutedUntil: 0,
       lastReactionAt: 0,
+      holder: null,
       removeAfterHand: false,
       standAfterHand: false,
       eliminated: false,
@@ -1029,9 +1114,83 @@ export class RoomManager {
     for (let attempt = 0; attempt < 20; attempt++) {
       let code = ""
       for (let i = 0; i < 5; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]
-      if (!this.rooms.has(code)) return code
+      if (code !== PRACTICE_CODE && !this.rooms.has(code)) return code
     }
     throw new RoomError("Couldn't mint a room code.")
+  }
+
+  private ensurePractice() {
+    if (this.rooms.has(PRACTICE_CODE)) return
+    const room: Room = {
+      code: PRACTICE_CODE,
+      hostId: "",
+      smallBlind: 50,
+      bigBlind: 100,
+      startingStack: 10_000,
+      actionTimeSec: 25,
+      mode: "cash",
+      listed: true,
+      practice: true,
+      paused: false,
+      stopAfterHand: false,
+      phase: "lobby",
+      members: [],
+      buttonSeat: null,
+      hand: null,
+      handNumber: 0,
+      turnEndsAt: null,
+      botActAt: null,
+      runoutAt: null,
+      showdownUntil: null,
+      betweenUntil: null,
+      history: [],
+      chat: [],
+      banner: "Practice table. The bot squad stays for the next hand — deal when you want to play.",
+      createdAt: this.now,
+      updatedAt: this.now,
+      lastHumanAt: this.now,
+      version: 1,
+      pendingEvents: [],
+      championId: null,
+      pendingBlinds: null,
+    }
+    this.rooms.set(room.code, room)
+    for (const name of READY_GROUP.names) this.seatBot(room, name)
+    this.touch(room)
+  }
+
+  private botSeated(room: Room, name: string) {
+    return room.members.some((member) => member.isBot && member.name === name && member.seat !== null)
+  }
+
+  private seatBot(room: Room, name?: string) {
+    const seat = this.firstOpenSeat(room)
+    if (seat === null) throw new RoomError("No open seat for a bot.")
+    const profile = name
+      ? BOT_ROSTER.find((bot) => bot.name === name)
+      : BOT_ROSTER.find((bot) => !this.botSeated(room, bot.name))
+    if (!profile) throw new RoomError(name ? "That bot isn't in the squad." : "Every bot style is already seated.")
+    if (this.botSeated(room, profile.name)) throw new RoomError(`${profile.name} is already at the table.`)
+    const bot = this.makeMember(profile.name, { color: profile.color, emoji: profile.emoji }, true)
+    bot.seat = seat
+    bot.stack = room.startingStack
+    bot.connected = true
+    bot.botStyle = profile.style
+    room.members.push(bot)
+    return bot
+  }
+
+  private botBench(room: Room): BotBenchItem[] {
+    return BOT_ROSTER.map((bot) => {
+      const seated = room.members.find((member) => member.isBot && member.name === bot.name && member.seat !== null)
+      return {
+        name: bot.name,
+        emoji: bot.emoji,
+        style: bot.blurb,
+        seated: Boolean(seated),
+        playerId: seated?.id,
+      }
+    })
   }
 
   private note(room: Room, text: string) {

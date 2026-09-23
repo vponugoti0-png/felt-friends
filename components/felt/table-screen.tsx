@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
 
@@ -45,13 +45,12 @@ export function TableScreen({ code }: { code: string }) {
     return first.handName ?? room.state.banner
   }, [room.state])
 
-  async function copyInvite() {
-    const link = `${window.location.origin}/room/${code}`
+  async function copyText(value: string, label: string) {
     try {
-      await navigator.clipboard.writeText(link)
-      toast.success("Invite link copied")
+      await navigator.clipboard.writeText(value)
+      toast.success(label)
     } catch {
-      toast(link)
+      toast(value)
     }
   }
 
@@ -60,6 +59,39 @@ export function TableScreen({ code }: { code: string }) {
   }
   if (room.status === "closed") {
     return <Centered title="This table closed" body="Rooms live in memory and disappear when everyone leaves." />
+  }
+  if (room.status === "conflict") {
+    return (
+      <Centered
+        title="You're already seated in another tab"
+        body="This browser already has a seat at this table. Watch from here, or move the seat to this tab. The other tab will be told — you are not sat out."
+      >
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void room.join({ name: settings.name.trim() || "Guest", avatar: settings.avatar, spectate: true, remember: false })}
+          >
+            Watch from here
+          </Button>
+          <Button type="button" onClick={() => void room.takeover()}>
+            Play in this tab
+          </Button>
+        </div>
+      </Centered>
+    )
+  }
+  if (room.status === "displaced") {
+    return (
+      <Centered
+        title="Your seat moved to another tab"
+        body={room.notice ?? "This tab is no longer playing that seat. You were not sat out."}
+      >
+        <Button type="button" onClick={() => void room.takeover()}>
+          Play in this tab
+        </Button>
+      </Centered>
+    )
   }
   if (room.status === "gate" || !room.state) {
     return (
@@ -74,6 +106,7 @@ export function TableScreen({ code }: { code: string }) {
         >
           <p className="font-display text-3xl text-[#e4c36a]">Join {code}</p>
           <p className="text-sm text-[#b7ab96]">Play chips only. No real-money gambling.</p>
+          <p className="text-sm text-[#b7ab96]">Anyone with this code can join — treat it like a party invite.</p>
           {room.error ? <p className="text-sm text-rose-300">{room.error}</p> : null}
           <div className="space-y-1.5">
             <Label htmlFor="join-name">Display name</Label>
@@ -110,14 +143,22 @@ export function TableScreen({ code }: { code: string }) {
   const you = state.you
 
   return (
-    <main className="casino-bg flex h-dvh flex-col">
-      <header className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+    <main className="casino-bg flex h-dvh max-w-[100vw] flex-col overflow-x-hidden">
+      <header className="flex flex-wrap items-center gap-2 border-b border-white/10 px-3 py-2">
         <Link href="/" className="font-display text-xl text-[#e4c36a]">
           Felt Friends
         </Link>
-        <button type="button" className="rounded-full bg-white/10 px-3 py-1 text-sm tracking-[0.2em]" onClick={() => void copyInvite()}>
-          {code}
-        </button>
+        <span className="rounded-full bg-white/10 px-3 py-1 text-sm tracking-[0.2em]">{code}</span>
+        <Button type="button" size="sm" onClick={() => void copyText(code, "Room code copied")}>
+          Copy code
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void copyText(`${window.location.origin}/room/${code}`, "Share link copied")}
+        >
+          Share link
+        </Button>
         <span className="hidden text-xs text-[#b7ab96] sm:inline">
           {state.smallBlind}/{state.bigBlind} · {formatChips(state.startingStack)} start · {state.mode === "sng" ? "Sit & go" : "Cash chips"}
         </span>
@@ -144,18 +185,58 @@ export function TableScreen({ code }: { code: string }) {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <section className="relative flex min-w-0 flex-1 flex-col">
-          <div className="relative mx-auto flex w-full max-w-5xl flex-1 items-center px-2 py-3">
-            <div className={cn("felt-rail relative aspect-[16/10] w-full max-h-full rounded-[999px] p-3 sm:p-4", room.dealing && "dealing")}>
-              <div className="felt relative h-full w-full overflow-hidden rounded-[999px]">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="relative mx-auto flex min-h-0 w-full max-w-5xl flex-1 items-center overflow-hidden px-1 py-1 sm:px-2 sm:py-3">
+            <div className={cn("felt-rail relative h-full w-full max-w-full overflow-hidden rounded-[1.5rem] p-2 sm:aspect-[16/10] sm:h-auto sm:max-h-full sm:rounded-[999px] sm:p-4", room.dealing && "dealing")}>
+              <div className="felt relative flex h-full w-full flex-col overflow-hidden rounded-[1.25rem] sm:rounded-[999px]">
                 <Dealer />
-                <div className="absolute top-[34%] left-1/2 flex w-[70%] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-2">
+                <div className="flex flex-wrap items-start justify-center gap-x-1 gap-y-1 px-1 pt-1 sm:contents">
+                  {state.players
+                    .filter((player) => player.id !== you?.id)
+                    .map((player) => {
+                      const slot = SEAT_SLOTS[visualIndex(player.seat, heroSeat)]
+                      return (
+                        <div
+                          key={player.id}
+                          className="seat-anchor"
+                          style={{ ["--seat-x" as string]: `${slot.x}%`, ["--seat-y" as string]: `${slot.y}%` }}
+                        >
+                          <SeatView
+                            player={player}
+                            hero={false}
+                            turnEndsAt={player.isTurn ? state.turnEndsAt : null}
+                            serverNow={state.serverNow}
+                            actionMs={state.actionTimeSec * 1000}
+                            sound={settings.sound}
+                            volume={settings.volume}
+                          />
+                        </div>
+                      )
+                    })}
+                  {Array.from({ length: state.maxSeats }, (_, seat) => seat)
+                    .filter((seat) => !state.players.some((player) => player.seat === seat))
+                    .map((seat) => {
+                      const slot = SEAT_SLOTS[visualIndex(seat, heroSeat)]
+                      return (
+                        <button
+                          key={seat}
+                          type="button"
+                          className="seat-anchor self-start rounded-full border border-dashed border-white/30 px-2 py-1 text-[10px] text-white/70 hover:bg-white/10 sm:px-3 sm:py-2 sm:text-[11px]"
+                          style={{ ["--seat-x" as string]: `${slot.x}%`, ["--seat-y" as string]: `${slot.y}%` }}
+                          onClick={() => void room.send("table:sit", { seat })}
+                        >
+                          Sit
+                        </button>
+                      )
+                    })}
+                </div>
+                <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center gap-2 px-2 sm:absolute sm:top-[34%] sm:left-1/2 sm:w-[70%] sm:flex-none sm:-translate-x-1/2 sm:-translate-y-1/2">
                   <div className="flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-sm text-[#f6e7bf]">
                     <ChipStack amount={Math.max(state.pot, 1)} />
                     Pot {formatChips(state.pot)}
                   </div>
-                  <div className="flex min-h-[74px] items-center gap-1.5">
+                  <div className="flex min-h-12 items-center gap-1 sm:min-h-[74px] sm:gap-1.5">
                     {state.community.map((card, index) => (
                       <PlayingCard
                         key={cardKey(card)}
@@ -166,45 +247,43 @@ export function TableScreen({ code }: { code: string }) {
                     ))}
                   </div>
                   {state.banner ? <p className="max-w-md text-center text-xs text-[#f6e7bf]">{state.banner}</p> : null}
-                </div>
-
-                {state.players.map((player) => {
-                  const slot = SEAT_SLOTS[visualIndex(player.seat, heroSeat)]
-                  return (
-                    <div
-                      key={player.id}
-                      className="absolute -translate-x-1/2 -translate-y-1/2"
-                      style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
-                    >
-                      <SeatView
-                        player={player}
-                        hero={player.id === you?.id}
-                        turnEndsAt={player.isTurn ? state.turnEndsAt : null}
-                        serverNow={state.serverNow}
-                        actionMs={state.actionTimeSec * 1000}
-                        sound={settings.sound}
-                        volume={settings.volume}
-                      />
+                  {state.phase === "lobby" ? (
+                    <div className="text-center">
+                      <p className="text-sm text-[#f6e7bf]">Waiting for friends. Share code {code}.</p>
+                      {you?.isHost ? (
+                        <Button type="button" className="mt-2" onClick={() => void room.send("host:start")}>
+                          Deal the first hand
+                        </Button>
+                      ) : (
+                        <p className="mt-1 text-xs text-[#b7ab96]">The host starts when the table is ready.</p>
+                      )}
                     </div>
-                  )
-                })}
-
-                {Array.from({ length: state.maxSeats }, (_, seat) => seat)
-                  .filter((seat) => !state.players.some((player) => player.seat === seat))
-                  .map((seat) => {
-                    const slot = SEAT_SLOTS[visualIndex(seat, heroSeat)]
-                    return (
-                      <button
-                        key={seat}
-                        type="button"
-                        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/30 px-3 py-2 text-[11px] text-white/70 hover:bg-white/10"
-                        style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
-                        onClick={() => void room.send("table:sit", { seat })}
-                      >
-                        Sit
-                      </button>
-                    )
-                  })}
+                  ) : null}
+                </div>
+                <div className="flex justify-center pb-1 sm:contents">
+                  {state.players
+                    .filter((player) => player.id === you?.id)
+                    .map((player) => {
+                      const slot = SEAT_SLOTS[visualIndex(player.seat, heroSeat)]
+                      return (
+                        <div
+                          key={player.id}
+                          className="seat-anchor"
+                          style={{ ["--seat-x" as string]: `${slot.x}%`, ["--seat-y" as string]: `${slot.y}%` }}
+                        >
+                          <SeatView
+                            player={player}
+                            hero
+                            turnEndsAt={player.isTurn ? state.turnEndsAt : null}
+                            serverNow={state.serverNow}
+                            actionMs={state.actionTimeSec * 1000}
+                            sound={settings.sound}
+                            volume={settings.volume}
+                          />
+                        </div>
+                      )
+                    })}
+                </div>
 
                 {room.flies.map((fly) => (
                   <span
@@ -243,24 +322,15 @@ export function TableScreen({ code }: { code: string }) {
                   </div>
                 ) : null}
 
-                {state.phase === "lobby" ? (
-                  <div className="absolute inset-x-[18%] top-[62%] text-center">
-                    <p className="text-sm text-[#f6e7bf]">Waiting for friends. Share code {code}.</p>
-                    {you?.isHost ? (
-                      <Button type="button" className="mt-2" onClick={() => void room.send("host:start")}>
-                        Deal the first hand
-                      </Button>
-                    ) : (
-                      <p className="mt-1 text-xs text-[#b7ab96]">The host starts when the table is ready.</p>
-                    )}
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>
           {you?.isSpectator ? (
             <p className="px-4 pb-2 text-center text-sm text-[#b7ab96]">You&apos;re watching. Grab an empty seat between hands.</p>
           ) : null}
+          <p className="mx-auto mb-1 w-fit shrink-0 rounded-full border border-[#e4c36a]/40 bg-[#e4c36a]/10 px-3 py-1 text-center text-xs text-[#f6e7bf]">
+            Play chips only · no real money
+          </p>
           <ActionBar
             legal={you?.legal ?? null}
             hole={you?.hole ?? null}
@@ -288,7 +358,11 @@ export function TableScreen({ code }: { code: string }) {
             onKick={(playerId) => void room.send("host:kick", { playerId })}
             onPause={(paused) => void room.send("host:pause", { paused })}
             onBlinds={(smallBlind, bigBlind) => void room.send("host:blinds", { smallBlind, bigBlind })}
-            onAddBot={() => void room.send("host:add-bot")}
+            practice={state.practice}
+            bench={state.botBench}
+            onAddBot={(name) => void room.send("host:add-bot", name ? { name } : {})}
+            onAddGroup={() => void room.send("host:add-group")}
+            onClearBots={() => void room.send("host:clear-bots")}
             onRemoveBot={(playerId) => void room.send("host:remove-bot", { playerId })}
             onStart={() => void room.send("host:start")}
             onStop={() => void room.send("host:stop")}
@@ -323,12 +397,13 @@ function Dealer() {
   )
 }
 
-function Centered({ title, body }: { title: string; body: string }) {
+function Centered({ title, body, children }: { title: string; body: string; children?: ReactNode }) {
   return (
     <main className="casino-bg grid min-h-dvh place-items-center px-4 text-center">
-      <div>
+      <div className="max-w-md">
         <h1 className="font-display text-4xl text-[#e4c36a]">{title}</h1>
         <p className="mt-2 text-[#b7ab96]">{body}</p>
+        {children ? <div className="mt-4">{children}</div> : null}
         <Button className="mt-4" render={<Link href="/" />}>
           Back to the lobby
         </Button>

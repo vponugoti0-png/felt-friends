@@ -145,13 +145,19 @@ function hasDraw(hole: [Card, Card], board: Card[]): boolean {
   return false
 }
 
-export const BOT_ROSTER: { name: string; emoji: string; color: string; style: BotStyle }[] = [
-  { name: "Bluff Bot", emoji: "🦊", color: "#f97316", style: { tightness: 0.25, aggression: 0.85 } },
-  { name: "Check Bot", emoji: "🐼", color: "#22c55e", style: { tightness: 0.55, aggression: 0.15 } },
-  { name: "River Bot", emoji: "🐸", color: "#14b8a6", style: { tightness: 0.45, aggression: 0.55 } },
-  { name: "Pocket Pete", emoji: "🐧", color: "#3b82f6", style: { tightness: 0.72, aggression: 0.4 } },
-  { name: "Value Vera", emoji: "🦄", color: "#a855f7", style: { tightness: 0.5, aggression: 0.7 } },
-  { name: "Foldsworth", emoji: "🐢", color: "#84cc16", style: { tightness: 0.86, aggression: 0.2 } },
-  { name: "All-in Andy", emoji: "🐯", color: "#ef4444", style: { tightness: 0.2, aggression: 0.95 } },
-  { name: "Slowplay Sam", emoji: "🐙", color: "#6366f1", style: { tightness: 0.6, aggression: 0.35 } },
+export const BOT_ROSTER: { name: string; emoji: string; color: string; blurb: string; style: BotStyle }[] = [
+  { name: "Bluff Bot", emoji: "🦊", color: "#f97316", blurb: "Bluffs more", style: { tightness: 0.25, aggression: 0.85 } },
+  { name: "Check Bot", emoji: "🐼", color: "#22c55e", blurb: "Plays safe", style: { tightness: 0.55, aggression: 0.15 } },
+  { name: "River Bot", emoji: "🐸", color: "#14b8a6", blurb: "Mixes it up", style: { tightness: 0.45, aggression: 0.55 } },
+  { name: "Pocket Pete", emoji: "🐧", color: "#3b82f6", blurb: "Likes big pairs", style: { tightness: 0.72, aggression: 0.4 } },
+  { name: "Value Vera", emoji: "🦄", color: "#a855f7", blurb: "Bets strong hands", style: { tightness: 0.5, aggression: 0.7 } },
+  { name: "Foldsworth", emoji: "🐢", color: "#84cc16", blurb: "Folds a lot", style: { tightness: 0.86, aggression: 0.2 } },
+  { name: "All-in Andy", emoji: "🐯", color: "#ef4444", blurb: "Pushes often", style: { tightness: 0.2, aggression: 0.95 } },
+  { name: "Slowplay Sam", emoji: "🐙", color: "#6366f1", blurb: "Traps, then bets", style: { tightness: 0.6, aggression: 0.35 } },
 ]
+
+/** Three bots that sit together in one tap. */
+export const READY_GROUP = {
+  name: "Mixed pack",
+  names: ["Bluff Bot", "Check Bot", "River Bot"] as const,
+}
